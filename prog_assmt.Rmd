@@ -1,0 +1,86 @@
+---
+title: "Prediction Assignment Writeup"
+author: "jp"
+date: "04/18/2015"
+output: html_document
+---
+
+Overview
+============
+The data for this project come from this source: <http://groupware.les.inf.puc-rio.br/har>. The goal of this project is to create a model that will predict the manner in which subjects did their exercise, as noted in the "classe" variable in the training set.
+
+The analysis is limited to those measurements that are present in the test set for this exercise, since the derivation of computed measurements at the change of moving windows by the study authors is not certain. We only load the data from those columns that are not dependent on the moving windows used by the authors. The training set is then broken into training and test sets which contain equal amounts of sequential data from each class.
+
+Exploratory Analysis
+====================
+```{r}
+colclasses <- c("NULL", "factor", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "numeric", "numeric", "numeric", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "numeric", "numeric", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "factor")
+pmltraining = read.csv("C:/_dev/R/machlearn/pml-training.csv", header=TRUE, colClasses=colclasses)
+library(caret)
+set.seed(4582)
+inTrain<-createDataPartition(y=pmltraining$classe,p=.7,list=FALSE)
+training<-pmltraining[inTrain,]
+testing<-pmltraining[-inTrain,]
+```
+
+There is variability across all columns of the data, so we will retain all for the model.
+
+```{r}
+nsv <- nearZeroVar(training, saveMetrics=TRUE)
+nsv[which(nsv$nzv),]
+```
+
+
+We can look at correlations across the variables for some exploratory analysis.
+
+```{r}
+M <- abs(cor(training[,2:53]))
+diag(M) <- 0
+which(M > 0.8,arr.ind=T)
+```
+
+Some of the variables are corellated across classes and users. This may be because some lifting movements incur changes across multiple axes, and because the pitch, yaw and roll are derived directly from the sensor data across the respective axes.  These are the groupings suggested by the correlations: 1) yaw_belt, total_accel_belt, accel_belt_y, accel_belt_z, roll_belt; 2) pitch_belt, accel_belt_x, magnet_belt_x; 3) gyros_arm_y, gyros_arm_x; 4) magnet_arm_x, accel_arm_x; 5) magnet_arm_z, magnet_arm_y; 6) accel_dumbbell_x, pitch_dumbell; 7) accel_dumbbell_z, yaw_dumbbell. 
+
+Modeling
+========
+
+The correlations suggest that we should use Principal Component Analysis to compress the correlated columns and simplify the model. However, the error rate on a Random Forest based on a PCA shows enough expected error to be significant in the context of the assignment.
+
+```{r}
+# Create random forest on a principal component analysis
+library(randomForest)
+set.seed(4582)
+prComp <- prcomp(training[,2:53])
+training.pc <- predict(prComp, training)
+training.pcrf <- randomForest(training.pc, y=training$classe)
+training.pcrf
+```
+
+A Random Forest based on the raw data is more accurate, and accurate enough, so we will use that instead. The importance of the variables is displayed for comparison with those correlated above.
+
+
+```{r}
+set.seed(4582)
+training.rf <- randomForest(training[,2:53], y=training$classe)
+training.rf
+varImpPlot(training.rf)
+```
+
+Cross-validation
+================
+If we needed to process large amounts data, we could tune the random forest generation for max nodes, but the above model should suffice for the purpose of the assignment. As an example, cross-validation shows the error decreasing as number of predictors grows, up to roughly thirteen variables.
+
+```{r}
+set.seed(4582)
+training.rfcv <- rfcv(training[,2:53], training$classe, cv.fold=5)
+with(training.rfcv, plot(n.var, error.cv, log="x", type="o", lwd=2))
+```
+
+Application to Test Set
+=======================
+Using our model, we can estimate our out-of-sample error rate against the test set:
+
+```{r}
+confusionMatrix(testing$classe, predict(training.rf, testing))
+```
+
